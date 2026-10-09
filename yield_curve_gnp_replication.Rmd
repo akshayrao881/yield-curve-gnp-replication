@@ -1,0 +1,1749 @@
+---
+title: "Term Structure as a predictor of Real Economic activity"
+author: "Reshma Thomas and Akshay Rao"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 2
+header-includes:
+  - \usepackage{tcolorbox}      
+  - \usepackage{adjustbox}      
+  - \usepackage{xcolor}         
+  - \usepackage{booktabs}       
+toc-title: "Table of Contents"
+---
+
+\newpage
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  fig.align = "center",
+  fig.height = 5,
+  fig.width = 7,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# 1. Introduction
+
+This project replicates the empirical analysis from *Estrella and Hardouvelis (1991)*\textsuperscript{[\hyperlink{ref1}{1}]}, which investigates whether the term structure of interest rates: the slope of the yield curve can predict future real economic activity in the United States. *The motivation for this study stems from the observation that changes in the yield curve often precede business cycle turning points*. Understanding this relationship has both academic and policy relevance, as it provides a potentially powerful and simple indicator for forecasting recessions and guiding monetary policy decisions.
+
+The primary dependent variable (Y) in this study is the **future rate of growth in real Gross National Product (real GNP)**, measured as the annualized cumulative percentage change in real GNP over 4 quarters ahead. The key explanatory variable (X) is the **slope of the yield curve (SPREAD)**, defined as the difference between the long-term (10-year Treasury bond) yield and the short-term (3-month Treasury bill) yield. The central hypothesis is that a steeper yield curve (a larger positive spread) signals higher expected future economic growth, while a flatter or inverted curve indicates an economic slowdown.
+
+Additional control variables such as the real federal funds rate, the index of leading indicators, lagged inflation, and lagged output growth are also considered to test the robustness of the term structure’s predictive power.
+
+## 1.1 Literature Review
+
+The relationship between the yield curve and future economic activity has long been a topic of interest in both finance and macroeconomics. Early studies such as Fama (1984, 1986)\textsuperscript{[\hyperlink{ref2}{2}]} and Campbell & Shiller (1987)\textsuperscript{[\hyperlink{ref3}{3}]} provided evidence that forward rates and term spreads contain information about future interest rate movements. Mishkin (1988, 1990)\textsuperscript{[\hyperlink{ref4}{4}]} and Fama & Bliss (1987)\textsuperscript{[\hyperlink{ref5}{5}]} extended this literature, showing that the slope of the yield curve predicts future changes in both real interest rates and inflation.
+
+However, empirical research on whether the yield curve can forecast real output growth was limited until the late 1980s. Laurent (1988)\textsuperscript{[\hyperlink{ref6}{6}]} and Harvey (1988)\textsuperscript{[\hyperlink{ref7}{7}]} examined the relationship between the term structure and real GNP or consumption growth, finding mixed but suggestive evidence that a positive slope predicts economic expansion. Estrella and Hardouvelis (1991) advanced this literature by showing that the yield curve has **strong and statistically significant predictive power for real GNP growth**, outperforming other indicators such as survey forecasts, the index of leading indicators, and short-term real interest rates.
+
+Theoretically, a positive slope in the yield curve may reflect market expectations of rising future short-term rates driven by stronger real activity and higher inflation. Similarly,the empirical evidence consistently points to the yield curve as a leading indicator of economic activity.
+
+\newpage
+
+# 2. Data
+
+```{r load_libs, echo=TRUE}
+library(tidyverse)
+library(readr)
+library(knitr)
+library(ggplot2)
+library(zoo)
+library(lubridate)
+library(kableExtra)
+library(lmtest)
+library(sandwich)
+library(broom)
+library(kableExtra)
+library(dplyr)
+library(rlang)
+library(patchwork)
+library(grid)
+library(stats)
+library(caret)
+library(tibble)
+library(car)
+library(strucchange)
+library(gridExtra)
+```
+
+## 2.1 Data Sources
+
+**Files**: GNP.csv, FEDFUNDS.csv, GS10.csv, TB3MS.csv, GLI.csv, GNPDEF.csv  
+**Period**: January 1955 to April 2025  
+**Frequency**: Quarterly  
+
+**Variables**:  
+`GNP.FG`: Real Gross National Product (Y variable)  
+`SPREAD`:  10-year yield on US Treasury - 3-month T-Bill yield (X)  
+`RFF.G`: Fedfund Rate - expected Inflation (Z1)  
+`GLI.G`: Annualized growth in the index of leading macroeconomic indicators (Z2)  
+`LDEP.G`: Lagged dependent variable (Z3)  
+`GNPDEF.G`: Lagged Inflation (Z4)  
+
+```{r load data, echo=TRUE}
+#Load data
+GS10_raw<- read_csv("GS10.csv")
+TB3MS_raw<- read_csv("TB3MS.csv")
+FEDFUNDS_raw<- read_csv("FEDFUNDS.csv")
+GLI_raw<- read_csv("GLI.csv")
+GNPDEF_raw<- read_csv("GNPDEF.csv")
+GNP_raw<- read_csv("GNP.csv")
+USREC_raw <- read.csv("USREC.csv")
+```
+
+```{r clean-data, echo=TRUE}
+
+# Data Management
+# quarterly data
+GS10 <- ts(GS10_raw$GS10, start=c(1953,1), end=c(2025,2), frequency=4)
+TB3MS <- ts(TB3MS_raw$TB3MS, start=c(1934,1), end=c(2025,2), frequency=4)
+FEDFUNDS <- ts(FEDFUNDS_raw$FEDFUNDS, start=c(1954,2), end=c(2025,2), frequency=4)
+GLI <- ts(GLI_raw$GLI, start=c(1955,1), end=c(2025,2), frequency=4)
+GNPDEF <- ts(GNPDEF_raw$GNPDEF, start=c(1947,1), end=c(2025,1), frequency=4)
+GNP <- ts(GNP_raw$GNP, start=c(1947,1), end=c(2025,1), frequency=4)
+USREC <- ts(USREC_raw$USREC, start=c(1855,1), end=c(2025,2), frequency=4)
+
+GS10 <- window(GS10, start=c(1955,1), end=c(2024,4))
+TB3MS <- window(TB3MS, start=c(1955,1), end=c(2024,4))
+FEDFUNDS <- window(FEDFUNDS, start=c(1955,1), end=c(2024,4))
+GLI <- window(GLI, start=c(1955,1), end=c(2024,4))
+GNPDEF <- window(GNPDEF, start=c(1955,1), end=c(2024,4))
+GNP <- window(GNP, start=c(1955,1), end=c(2024,4))
+USREC <- window(USREC, start=c(1955,1), end=c(2024,4))
+
+# --- Predictive variables ---
+k <- 4 # 4 quarters ahead as in the paper
+
+# Forward-looking growth
+GNP.FG <- (400 / k) * (log(stats::lag(GNP, k)) - log(GNP))
+
+# Explanatory variables
+SPREAD <- GS10 - TB3MS
+
+# Calculate inflation
+inflation_q <- 400 * diff(log(GNPDEF))  # annualized quarterly inflation
+inflation_q <- ts(inflation_q, start=c(1955,2), frequency=4)  # starts Q2 1955
+
+# Out-of-sample 1-quarter ahead forecast of inflation using recursive AR(12)
+expected_inflation <- rep(NA, length(inflation_q))
+
+# Need at least 25-30 observations to reliably fit AR(12) with OLS
+for(t in 75:(length(inflation_q)-1)) {
+  # recursive estimation
+  ar_model <- ar(inflation_q[1:t], order.max = 12, aic = FALSE, method = "ols")
+  expected_inflation[t+1] <- predict(ar_model, n.ahead=1)$pred[1]
+}
+
+# Remove the initial NAs
+expected_inflation <- expected_inflation[76:length(expected_inflation)]
+expected_inflation <- ts(expected_inflation, start=time(inflation_q)[76], frequency=4)
+
+# Trim FEDFUNDS to exactly match expected_inflation
+FEDFUNDS_adj <- window(FEDFUNDS,
+                       start = start(expected_inflation),
+                       end   = end(expected_inflation))
+
+# Compute ex ante real federal funds rate
+RFF.G <- FEDFUNDS_adj - expected_inflation
+RFF.G <- ts(RFF.G, start=start(expected_inflation), frequency=4)
+
+# Leading indicator growth
+GLI.G <- 400 * (log(GLI) - log(stats::lag(GLI, -1)))
+
+# LDEP.G: lagged dependent variable (past k-quarter growth)
+LDEP.G <- (400 / k) * (log(GNP) - log(stats::lag(GNP, -k)))
+
+# Lagged inflation
+GNPDEF.G <- (400 / k) * (log(GNPDEF) - log(stats::lag(GNPDEF, -k)))
+
+# MERGE ALL TIME SERIES USING ts.intersect
+DATA <- ts.intersect(GNP.FG, SPREAD, RFF.G, GLI.G, LDEP.G, GNPDEF.G)
+
+# Save the ts object start date for later use
+data_start <- start(DATA)
+data_end <- end(DATA)
+
+# Keep a ts version for CUSUM tests (critical for date axis)
+DATA_ts <- DATA
+
+# Convert to data frame for lm() regression
+DATA <- as.data.frame(DATA)
+
+
+# Output
+cat("Final rows:", nrow(DATA), "\n")
+cat("Data starts at:", data_start[1], "Q", data_start[2], "\n")
+cat("Data ends at:", data_end[1], "Q", data_end[2], "\n")
+```
+\newpage
+
+## 2.2 Data description
+
+In this project, we analyze a linear regression model with **forward-looking real GNP growth** (`GNP.FG`) as the dependent variable and several macroeconomic and financial predictors, including **slope of the yield curve** (`SPREAD`), **real Federal Funds rate** (`RFF.G`), **growth in the leading indicators index** (`GLI.G`), **lagged GNP growth** (`LDEP.G`), and **lagged inflation from the GNP deflator** (`GNPDEF.G`). All data are obtained from public sources.  
+
+The details are given below:
+
+**GNP.FG**: Forward-looking real Gross National Product growth over the next 4 quarters, measured as the annualized cumulative percentage change. *The underlying real GNP series is reported in billions of dollars but has been transformed into forward-looking growth rates for the regression*. This variable captures expected economic activity in future quarters. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: <https://fred.stlouisfed.org/series/GNP>.
+
+**SPREAD (X)**: Slope of the yield curve at time t, calculated as the difference between the 10-year Treasury bond yield and the 3-month Treasury bill yield. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: 10-Year T-Bond: <https://fred.stlouisfed.org/series/GS10>; 3-Month T-Bill: <https://fred.stlouisfed.org/series/TB3MS>.
+
+**RFF.G (Z1)**: Real Federal Funds rate at time t, calculated as the nominal federal funds rate minus expected rate of inflation. Captures the stance of monetary policy. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: Fed Funds Rate: <https://fred.stlouisfed.org/series/FEDFUNDS>; Expected Rate of Inflation(AR 12): <https://fred.stlouisfed.org/series/GNPDEF>.
+
+**GLI.G (Z2)**: Annualized growth of the index of leading indicators at time t, measuring forward-looking macroeconomic conditions. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: <https://fred.stlouisfed.org/series/USALOLITOAASTSAM>.
+
+**LDEP.G (Z3)**: Lagged dependent variable representing past GNP growth over 4 quarters, capturing persistence in output growth. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: <https://fred.stlouisfed.org/series/GNP>.
+
+**GNPDEF.G (Z4)**: Cumulative inflation over the past 4 quarters, derived from the GNP deflator, capturing past changes in the price level. Frequency: quarterly. Units: percent (%). Data source: FRED. Available at: <https://fred.stlouisfed.org/series/GNPDEF>.
+
+
+**Sample Information**
+
+**Sample size**: `r nrow(DATA)` observations  
+
+## 2.3 Descriptive Statistics
+```{r descriptive-stats, echo=TRUE}
+
+# Select relevant variables 
+DATA <- DATA[, c("GNP.FG", "SPREAD", "RFF.G", "GLI.G", "LDEP.G", "GNPDEF.G")]
+
+# --- Summary Statistics Table ---
+stats_table <- data.frame(
+  Min = round(sapply(DATA, min), 2),
+  "1st Qu." = round(sapply(DATA, quantile, probs = 0.25), 2),
+  Median = round(sapply(DATA, median), 2),
+  Mean = round(sapply(DATA, mean), 2),
+  "3rd Qu." = round(sapply(DATA, quantile, probs = 0.75), 2),
+  Max = round(sapply(DATA, max), 2),
+  check.names = FALSE
+)
+
+# --- Correlation Matrix ---
+cor_table <- round(cor(DATA), 3)
+rownames(cor_table) <- colnames(cor_table) <- colnames(DATA)
+
+# --- Display Summary Statistics Table ---
+kable(stats_table,
+      caption = "Summary Statistics for Predictor and Dependent Variables",
+      booktabs = TRUE,
+      escape = FALSE,
+      align = "lcccccc") %>%
+  kable_styling(latex_options = c("HOLD_position", "striped", "scale_down"),
+                font_size = 9,
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  column_spec(1, width = "4cm", latex_valign = "m") %>%
+  column_spec(2:7, width = "1.6cm", latex_valign = "m") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+
+# --- Display Correlation Matrix ---
+kable(cor_table,
+      caption = "Correlation Matrix for Predictor and Dependent Variables",
+      booktabs = TRUE,
+      escape = FALSE,
+      align = "cccccc") %>%
+  kable_styling(latex_options = c("HOLD_position", "striped", "scale_down"),
+                font_size = 9,
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  column_spec(1:6, width = "1.7cm", latex_valign = "m") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+
+```
+
+**Interpretation**
+
+The variables show substantial economic variation: GNP growth ranges from deep contractions to strong expansions, while SPREAD, RFF.G, and GLI.G display wide swings consistent with changing monetary and business-cycle conditions. Median values for SPREAD and GNPDEF.G indicate a typically upward-sloping yield curve and moderate inflation.
+
+Correlations with future GNP growth are modest: SPREAD (0.36) and GLI.G (0.29) show the strongest positive associations, while RFF.G, LDEP.G, and GNPDEF.G exhibit near-zero relationships. Predictor-to-predictor correlations are low, indicating no multicollinearity concerns and that the variables capture largely distinct information.
+
+
+## 2.4 Plots
+```{r plots, echo=TRUE, fig.width=8, fig.height=10, out.width="100%"}
+
+# --- Dates for time series ---
+data_start <- start(ts.intersect(GNP.FG, SPREAD, RFF.G, GLI.G, LDEP.G, GNPDEF.G))
+year <- data_start[1]
+quarter <- data_start[2]
+month <- (quarter - 1) * 3 + 1
+start_date <- as.Date(paste0(year, "-", month, "-01"))
+
+DATA$dates <- seq.Date(from = start_date, by = "quarter", length.out = nrow(DATA))
+
+# --- Extract recession periods from USREC time series ---
+USREC_matched <- window(USREC, start = data_start, end = end(ts.intersect(GNP.FG, SPREAD, RFF.G, GLI.G, LDEP.G, GNPDEF.G)))
+
+USREC_df <- data.frame(
+  date = seq.Date(from = start_date, by = "quarter", length.out = length(USREC_matched)),
+  value = as.numeric(USREC_matched)
+)
+
+n <- nrow(USREC_df)
+recession_indicator <- USREC_df$value == 1
+
+recession_starts <- USREC_df$date[which(recession_indicator & c(TRUE, !recession_indicator[-n]))]
+recession_ends <- USREC_df$date[which(recession_indicator & c(!recession_indicator[-1], TRUE))]
+
+recessions <- data.frame(
+  start = recession_starts,
+  end = recession_ends
+)
+
+# --- Time Series Plot Function ---
+plot_ts <- function(yvar, ylab, color){
+  ggplot(DATA, aes(x = dates, y = !!sym(yvar))) +
+    geom_rect(data = recessions, aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+              inherit.aes = FALSE, fill = "gray80", alpha = 0.3) +
+    geom_line(color = color, linewidth = 0.7) +
+    scale_x_date(date_breaks = "5 years", date_labels = "%Y") + 
+    labs(title = ylab, x = "Year", y = ylab) +
+    theme_minimal(base_size = 11) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+      axis.text.y = element_text(size = 9),
+      axis.title.x = element_text(size = 11, face = "bold", vjust = -0.5),
+      axis.title.y = element_text(size = 11, face = "bold", vjust = 1.5),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      plot.margin = margin(8, 8, 8, 8)
+    )
+}
+
+# --- Scatter Plot Function ---
+make_scatter <- function(xvar, xlabel){
+  ggplot(DATA, aes(x = !!sym(xvar), y = GNP.FG)) +
+    geom_point(alpha = 0.7, size = 2, color = "blue") +
+    geom_smooth(method = "lm", se = TRUE, color = "red", linewidth = 0.6) +
+    labs(title = paste("GNP Growth vs", xlabel),
+         x = xlabel, y = "GNP Growth (%)") +
+    theme_minimal(base_size = 11) +
+    theme(
+      axis.text.x = element_text(size = 9),
+      axis.text.y = element_text(size = 9),
+      axis.title.x = element_text(size = 11, face = "bold", vjust = -0.5),
+      axis.title.y = element_text(size = 11, face = "bold", vjust = 1.5),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      plot.margin = margin(8, 8, 8, 8)
+    )
+}
+
+# --- Combined Time Series Plot ---
+plot_combined <- ggplot(DATA, aes(x = dates)) +
+  geom_rect(data = recessions, aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
+            inherit.aes = FALSE, fill = "gray80", alpha = 0.3) +
+  geom_line(aes(y = GNP.FG, color = "GNP Growth (%)"), linewidth = 0.7) +
+  geom_line(aes(y = SPREAD, color = "Yield Curve Spread (%)"), linewidth = 0.7) +
+  scale_color_manual(values = c("GNP Growth (%)" = "blue", 
+                                "Yield Curve Spread (%)" = "darkgreen")) +
+  scale_x_date(date_breaks = "5 years", date_labels = "%Y") +
+  labs(title = "GNP Growth & Yield Curve Spread Over Time",
+       x = "Year", y = "Value", color = "") +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+    axis.text.y = element_text(size = 9),
+    axis.title.x = element_text(size = 11, face = "bold", vjust = -0.5),
+    axis.title.y = element_text(size = 11, face = "bold", vjust = 1.5),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.margin = margin(8, 8, 8, 8),
+    legend.position = "top"
+  )
+
+# --- Create All Plots ---
+ts_plots <- list(
+  plot_ts("GNP.FG", "GNP Growth (%)", "blue"),
+  plot_ts("SPREAD", "Yield Curve Spread (%)", "darkgreen"),
+  plot_ts("RFF.G", "Real Fed Funds Rate Growth (%)", "darkred"),
+  plot_ts("GLI.G", "Leading Indicator Growth (%)", "purple"),
+  plot_ts("LDEP.G", "Lagged GNP Growth (%)", "orange"),
+  plot_ts("GNPDEF.G", "Inflation Growth (%)", "brown"),
+  plot_combined
+)
+
+scatter_plots <- list(
+  make_scatter("SPREAD", "Yield Curve Spread (%)"),
+  make_scatter("RFF.G", "Real Fed Funds Rate Growth (%)"),
+  make_scatter("GLI.G", "Leading Indicator Growth (%)"),
+  make_scatter("LDEP.G", "Lagged GNP Growth (%)"),
+  make_scatter("GNPDEF.G", "Inflation Growth (%)")
+)
+
+# --- OPTIMIZED: Display 2 plots per page efficiently ---
+# Combine all plots into a single list for unified pagination
+all_plots <- c(ts_plots, scatter_plots)
+
+# Display 2 plots per page
+for(i in seq(1, length(all_plots), by = 2)) {
+  if(i + 1 <= length(all_plots)) {
+    grid.arrange(all_plots[[i]], all_plots[[i+1]], ncol = 1)
+  } else {
+    print(all_plots[[i]])
+  }
+}
+```
+
+
+
+# 3. Regression Models
+
+In this section, we replicate the econometric models developed by *Estrella and Hardouvelis (1991)* in their study. We reproduce their three core regression models: a baseline term-structure model, a monetary-policy–adjusted model, and a comprehensive forecasting model with additional macroeconomic controls.
+
+## 3.1 Model 1: Basic Term-Structure Model
+
+The first model tests the central hypothesis that the **slope of the yield curve (SPREAD)** predicts future changes in real GNP.  
+A steeper yield curve, where long-term rates exceed short-term rates, is expected to signal higher future economic activity.
+
+
+$$
+\begin{aligned}
+GNP.FG &= \alpha_0 
++ (\alpha_1 \times \text{SPREAD}) 
+\end{aligned}
+$$
+
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black]
+$H_0: \ \alpha_1 = 0 \quad$ (SPREAD has no predictive/explanatory power on real economic activity) \\
+$H_1: \ \alpha_1 \neq 0 \quad$ (SPREAD has explanatory power)
+\end{tcolorbox}
+
+## 3.2 Model 2: Controlling for Monetary Policy
+
+The second model introduces the real federal funds rate (RFF) to control for the stance of monetary policy. Including this term helps determine whether the predictive power of the yield curve remains significant once monetary policy conditions are considered.
+
+$$
+\begin{aligned}
+GNP.FG &= \alpha_0
++ (\alpha_1 \times \text{SPREAD})
++ (\alpha_2 \times \text{RFF.G})
+\end{aligned}
+$$
+
+## 3.3 Model 3: Comprehensive Forecasting Model
+
+The third specification examines whether the yield-curve slope retains predictive power after adding several leading macroeconomic indicators commonly used in forecasting models. This allows testing whether the term structure’s predictive content remains robust when accounting for broader economic dynamics.
+
+$$
+\begin{aligned}
+GNP.FG &= \alpha_0 
++ (\alpha_1 \times \text{SPREAD})
++ (\alpha_2 \times \text{RFF.G})
++ (\alpha_3 \times \text{GLI.G}) \\
+&+ (\alpha_4 \times \text{LDEP.G})
++ (\alpha_5 \times GNPDEF.G)
+\end{aligned}
+$$
+
+Across all the three models, below is how the paper defines each variable.
+
+**Dependent variables**
+
+GNP.FG: Forward-looking real Gross National Product (GNP) growth from period t to t+k
+
+**Key predictors**
+
+- SPREAD:  Slope of the yield curve at time t (difference between long-term and short-term interest rates)
+- RFF.G:  Real Federal Funds rate at time t, calculated as the nominal federal funds rate minus expected inflation
+- GLI.G: Leading macroeconomic indicator at time t
+- LDEP.G: Lagged dependent variable
+- GNPDEF.G: Cumulative inflation from period t-k to t, representing past price level changes
+
+
+
+
+# 4. Interpretation of fitted regression
+
+## 4.1 OLS Estimation
+
+```{r OLS, echo=TRUE}
+
+# Helper Function 1: Coefficient Table
+create_coef_table <- function(model, terms, caption) {
+  
+  tidy(model) %>%
+    mutate(
+      term = terms,
+      estimate = format(estimate, scientific = TRUE, digits = 4),
+      std.error = format(std.error, scientific = TRUE, digits = 4),
+      statistic = round(statistic, 2),
+      p.value = sprintf("%.9f", p.value)  # Changed this line
+    ) %>%
+    kable(
+      caption = caption,
+      booktabs = TRUE,
+      align = "lcccc",
+      col.names = c("Variable", "Estimate", "Std. Error", "t value", "p value")
+    ) %>%
+    kable_styling(
+      latex_options = c("HOLD_position", "striped"),
+      stripe_color = "red!5!white"
+    ) %>%
+    row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+}
+
+# Helper Function 2: Model Fit Statistics Table
+create_fit_table <- function(model_summary, caption) {
+  Fstat <- model_summary$fstatistic[1]
+  df.model <- model_summary$fstatistic[2]
+  df.resid <- model_summary$fstatistic[3]
+  p.value <- pf(Fstat, df.model, df.resid, lower.tail = FALSE)
+  model_summary_tbl <- data.frame(
+    `R-Squared` = round(model_summary$r.squared, 4),
+    `Adjusted R-Squared` = round(model_summary$adj.r.squared, 4),
+    `F-Statistic` = round(Fstat, 2),
+    `p-value` = sprintf("%.4f", p.value),
+    `df (Model, Residual)` = paste(df.model, df.resid, sep = ", "),
+    check.names = FALSE
+  )
+  rownames(model_summary_tbl) <- NULL   # ← ADD THIS LINE
+
+  kable(
+    model_summary_tbl,
+    caption = caption,
+    booktabs = TRUE,
+    align = "lccccc"
+  ) %>%
+    kable_styling(
+      latex_options = c("HOLD_position", "striped"),
+      stripe_color = "red!5!white"
+    ) %>%
+    row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+}
+```
+
+```{r OLS-1, echo=TRUE}
+
+# MODEL 1
+
+eqn1.ols <- lm(GNP.FG ~ SPREAD, data = DATA)
+eqn1.ols_summary <- summary(eqn1.ols)
+
+create_coef_table(
+  eqn1.ols,
+  terms = c("Intercept", "SPREAD"),
+  caption = "Model 1 - GNP future Growth vs SPREAD"
+)
+
+create_fit_table(
+  eqn1.ols_summary,
+  caption = "Model 1 - Model Fit Statistics"
+)
+  
+
+
+# MODEL 2
+
+eqn2.ols <- lm(GNP.FG ~ SPREAD + RFF.G, data = DATA)
+eqn2.ols_summary <- summary(eqn2.ols)
+
+create_coef_table(
+  eqn2.ols,
+  terms = c("Intercept", "SPREAD", "RFF.G"),
+  caption = "Model 2 - GNP future Growth vs SPREAD and RFF"
+)  
+
+create_fit_table(
+  eqn2.ols_summary,
+  caption = "Model 2 - Model Fit Statistics"
+)
+
+
+# MODEL 3
+
+eqn3.ols <- lm(GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G, data = DATA)
+eqn3.ols_summary <- summary(eqn3.ols)
+
+create_coef_table(
+  eqn3.ols,
+  terms = c("Intercept", "SPREAD", "RFF.G", "GLI.G", "LDEP.G", "GNPDEF.G"),
+  caption = "Model 3 - GNP future Growth vs all macroeconomic variables"
+)
+create_fit_table(
+  eqn3.ols_summary,
+  caption = "Model 3 - Model Fit Statistics"
+)
+
+```
+
+**Interpretation of OLS results**
+
+**Model 1**: Regressing future GNP growth on the term spread shows that SPREAD is strongly statistically significant (p < 0.0001) with a positive coefficient. This suggests that a wider term spread is associated with higher next-quarter GNP growth. The model’s explanatory power is modest (R² = 0.1321, Adjusted R² = 0.1277), indicating that while SPREAD is meaningful, it explains only about 13% of the variation in future GNP growth.
+
+**Model 2**: Adding the real fed fund rate (RFF.G) does not substantially improve model performance. SPREAD remains highly significant (p < 0.0001), while RFF.G is insignificant (p = 0.4418). The overall fit increases only slightly (R² from 0.1321 → 0.1347), and the adjusted R² actually decreases a bit (0.1277 → 0.1259), indicating that RFF.G does not provide additional explanatory value beyond SPREAD.
+
+**Model 3**: Including the full macroeconomic set—SPREAD, RFF.G, GLI.G, LDEP.G, and GNPDEF.G—improves the model further. SPREAD remains highly significant (p < 0.0001), reinforcing its role as a leading indicator. GLI.G also becomes statistically significant (p = 0.0045), suggesting that global leading indicators contribute meaningfully to predicting future growth. The other variables (RFF.G, LDEP.G, GNPDEF.G) remain insignificant.
+
+Model fit increases (R² = 0.1717, Adjusted R² = 0.1503), which is an improvement over Models 1 and 2 but still modest in absolute terms. This indicates that broader macroeconomic information helps explain variations in future GNP growth but the gains are incremental rather than transformational.
+
+While Model 3 has the highest adjusted R², this improvement reflects in-sample fit only. To assess whether the added variables genuinely enhance predictive accuracy, further checks such as AIC/BIC and cross-validation are necessary. These help confirm whether the gains from Model 3 persist out-of-sample or whether the model simply captures noise in the estimation sample.
+
+## 4.2 Newey-West Robust Estimates
+
+**Lag Selection Justification**: We use lag = 3 in the Newey-West estimator. This choice is statistically justified by the autocorrelation analysis in Section 7.1, which reveals significant serial correlation in the OLS residuals up to the third lag. 
+
+
+```{r newey-west-estimates, echo=TRUE}
+# Compute Newey-West covariance matrices
+eqn1.nw <- NeweyWest(eqn1.ols, lag = 3)
+eqn2.nw <- NeweyWest(eqn2.ols, lag = 3)
+eqn3.nw <- NeweyWest(eqn3.ols, lag = 3)
+
+# Model 1: Newey-West
+nw_coef1 <- coeftest(eqn1.ols, vcov = eqn1.nw)
+nw_df1 <- data.frame(
+  Variable = rownames(nw_coef1),
+  Estimate = round(nw_coef1[,1], 4),
+  `Std. Error` = round(nw_coef1[,2], 4),
+  `t value` = round(nw_coef1[,3], 3),
+  `p-value` = formatC(nw_coef1[,4], format="f", digits=9)
+)
+```
+```{r NWE, echo=TRUE}
+rownames(nw_df1) <- NULL
+kable(nw_df1,
+      caption = "Model 1: Newey-West Robust Estimates (Lag 3)",
+      booktabs = TRUE,
+      align = "lcccc",
+      longtable = FALSE) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+
+# Model 2: Newey-West
+nw_coef2 <- coeftest(eqn2.ols, vcov = eqn2.nw)
+nw_df2 <- data.frame(
+  Variable = rownames(nw_coef2),
+  Estimate = round(nw_coef2[,1], 4),
+  `Std. Error` = round(nw_coef2[,2], 4),
+  `t value` = round(nw_coef2[,3], 3),
+  `p-value` = formatC(nw_coef2[,4], format="f", digits=9)
+)
+rownames(nw_df2) <- NULL
+kable(nw_df2,
+      caption = "Model 2: Newey-West Robust Estimates (Lag 3)",
+      booktabs = TRUE,
+      align = "lcccc",
+      longtable = FALSE) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+
+# Model 3: Newey-West
+nw_coef3 <- coeftest(eqn3.ols, vcov = eqn3.nw)
+nw_df3 <- data.frame(
+  Variable = rownames(nw_coef3),
+  Estimate = round(nw_coef3[,1], 4),
+  `Std. Error` = round(nw_coef3[,2], 4),
+  `t value` = round(nw_coef3[,3], 3),
+  `p-value` = formatC(nw_coef3[,4], format="f", digits=9)
+)
+rownames(nw_df3) <- NULL
+kable(nw_df3,
+      caption = "Model 3: Newey-West Robust Estimates (Lag 3)",
+      booktabs = TRUE,
+      align = "lcccc",
+      longtable = FALSE) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+
+# Comparison: OLS vs Newey-West for Model 3
+comparison_df3 <- data.frame(
+  Variable = rownames(nw_coef3),
+  Estimate = round(nw_coef3[,1], 4),
+  `OLS SE` = round(summary(eqn3.ols)$coefficients[,2], 4),
+  `NW SE` = round(nw_coef3[,2], 4),
+  `OLS p-value` = formatC(summary(eqn3.ols)$coefficients[,4], format="f", digits=9),
+  `NW p-value` = formatC(nw_coef3[,4], format="f", digits=9),
+  `Sig Change?` = ifelse(
+    (summary(eqn3.ols)$coefficients[,4] < 0.05 & nw_coef3[,4] >= 0.05) |
+    (summary(eqn3.ols)$coefficients[,4] >= 0.05 & nw_coef3[,4] < 0.05),
+    "Yes", "No"
+  )
+)
+rownames(comparison_df3) <- NULL
+kable(comparison_df3,
+      caption = "Comparison of OLS and Newey-West Estimates - Model 3",
+      booktabs = TRUE,
+      align = "lcccccc",
+      longtable = FALSE) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped", "scale_down"),
+                stripe_color = "red!5!white",
+                font_size = 9,
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  column_spec(7, bold = TRUE)
+```
+\newpage
+
+
+**Interpretation of Newey-West Results**
+
+Comparing OLS and Newey-West results reveals important differences due to serial correlation correction:
+
+- **Model 1:** SPREAD remains highly significant under both OLS (p < 0.0001) and Newey-West (p = 0.00049), though the robust standard error is larger (0.1813 vs 0.1171), reflecting the correction for autocorrelation.
+
+- **Model 2:** SPREAD continues to be significant with Newey-West correction, while RFF.G remains insignificant under both methods.
+
+- **Model 3 - Critical Finding:** GLI.G appears significant under OLS (p = 0.0045) but **becomes insignificant under Newey-West correction** (p = 0.281). This demonstrates that OLS underestimates standard errors when residuals are serially correlated, leading to spuriously significant results. **SPREAD is the only variable that maintains robust significance across all specifications** after proper correction for autocorrelation.
+
+The Newey-West estimates will be used in all subsequent hypothesis tests (Section 5) to ensure valid inference.
+
+  
+# 5. Hypothesis Test
+
+## 5.1 T-test on key variable
+
+We perform a t-test on the coefficient of SPREAD i.e. Model 1 to test whether SPREAD has a statistically significant effect on real economic activity (GNP).
+
+$$
+\begin{aligned}
+\text{GNP.FG} &= \alpha_0 
++ (\alpha_1 \times \text{SPREAD})
+\end{aligned}
+$$
+
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black]
+$H_0: \ \alpha_1 = 0 \quad$ (SPREAD has no predictive/explanatory power on real economic activity) \\
+$H_1: \ \alpha_1 \neq 0 \quad$ (SPREAD has explanatory power)
+\end{tcolorbox}
+
+
+```{r t_test, echo=TRUE}
+# Newey-West HAC standard errors
+eqn1.nw <- NeweyWest(eqn1.ols, lag = 3)
+
+# Coefficient test with Newey-West standard errors
+nw_coef <- coeftest(eqn1.ols, vcov = eqn1.nw)
+
+# Create formatted data frame
+nw_coef_df <- data.frame(
+  Variable = rownames(nw_coef),
+  Estimate = round(nw_coef[,1], 4),
+  `Std. Error` = round(nw_coef[,2], 4),
+  `t value` = round(nw_coef[,3], 3),
+  `p_value` = formatC(nw_coef[,4], format="e", digits=3)
+)
+
+rownames(nw_coef_df) <- NULL
+
+kable(nw_coef_df, 
+      caption = "T-test with Newey West Estimates (lag = 3)",
+      booktabs = TRUE, 
+      align = "lccccc") %>%
+  kable_styling(latex_options = c("HOLD_position","striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+The estimated coefficient for SPREAD is 0.6429 with a p-value of 0.0004895. Since the p-value is less than 0.05, we reject the null hypothesis. **This indicates that SPREAD has a statistically significant positive effect on the GNP.FG**.
+
+## 5.2 Wald Test on joint significance of the confounding factors
+
+$$
+\begin{aligned}
+\text{GNP.FG} &= \alpha_0 
++ (\alpha_1 \times \text{SPREAD})
++ (\alpha_2 \times \text{RFF.G})
++ (\alpha_3 \times \text{GLI.G}) \\
+&\quad + (\alpha_4 \times \text{LDEP.G})
++ (\alpha_5 \times \text{GNPDEF.G})
+\end{aligned}
+$$
+
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black,title=Hypothesis]
+$H_0: \alpha_2 = \alpha_3 = \alpha_4 = \alpha_5 = 0$ \quad (Confounding factors do not affect GNP.FG) \\
+$H_1: \text{At least one } \alpha_i \neq 0$ \quad (At least one confounding factor affects GNP.FG)
+\end{tcolorbox}
+
+
+```{r robust_wald_test, echo=TRUE}
+# Restricted model 
+eqn1.ols <- lm(GNP.FG ~ SPREAD, data = DATA)
+
+# Unrestricted model
+eqn3.ols <- lm(GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G, data = DATA)
+
+# Compute Newey-West robust covariance for unrestricted model (used from section 4.2)
+
+# Coefficient test with Newey-West standard errors for unrestricted model
+nw_coef <- coeftest(eqn3.ols, vcov = eqn3.nw)
+
+# Create formatted data frame for coefficients
+nw_coef_df <- data.frame(
+  Variable = rownames(nw_coef),
+  Estimate = round(nw_coef[,1], 4),
+  `Std. Error` = round(nw_coef[,2], 4),
+  `t value` = round(nw_coef[,3], 3),
+  `p_value` = formatC(nw_coef[,4], format="e", digits=3)
+)
+
+rownames(nw_coef_df) <- NULL
+
+# Wald test based on the Newey-West estimates
+wald_res <- waldtest(eqn1.ols, eqn3.ols, test = "Chisq", vcov = eqn3.nw)
+
+# Extract key values
+wald_stat <- round(wald_res$Chisq[2], 3)
+wald_df   <- wald_res$Df[2]
+wald_pval <- formatC(wald_res$`Pr(>Chisq)`[2], digits=4, format="e")
+
+# Decision
+decision <- ifelse(wald_res$`Pr(>Chisq)`[2] < 0.05, "Reject H0", "Fail to Reject H0")
+
+wald_table <- data.frame(
+  Test = "Robust Wald (Newey-West)",
+  Chi_Sq = round(wald_res$Chisq[2], 3),
+  df = wald_res$Df[2],
+  p_value = formatC(wald_res$`Pr(>Chisq)`[2], digits=4, format="e"),
+  Decision = ifelse(wald_res$`Pr(>Chisq)`[2] < 0.05, "Reject H0", "Fail to Reject H0")
+)
+
+kable(wald_table,
+      caption = "Wald Test: Restricted vs Unrestricted Model (Newey-West Robust)",
+      booktabs = TRUE,
+      align = "lcccc") %>%
+  kable_styling(latex_options = c("HOLD_position","striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+
+The Wald test results present an interesting contrast with the individual coefficient tests from Model 3. The joint test yields a Chi-square statistic of 2.48 with a p-value of 0.6482, leading us to fail to reject the null hypothesis at the 5% significance level. **This indicates that the confounding factors (RFF.G, GLI.G, LDEP.G, GNPDEF.G) do not jointly provide statistically significant explanatory power beyond what SPREAD already captures**.
+
+This finding appears to contradict the individual OLS results from Model 3, where GLI.G showed individual statistical significance (p = 0.0045). 
+
+Although GLI.G appears individually significant under OLS (p = 0.0045), this significance disappears once we apply Newey–West standard errors (p = 0.281). Therefore, the joint Wald test based on Newey–West corrections correctly shows that the control variables, including GLI.G, do not provide meaningful explanatory power as a group.
+
+Individual t-tests check each variable separately, while the Wald test evaluates whether the controls collectively improve the model, and they do not.
+
+  
+
+# 6. Model Selection
+
+The three regression models estimated in this project differ in complexity and the amount of economic information they incorporate. Model selection therefore requires evaluating not only statistical fit (R², adjusted R², significance of coefficients) but also economic reasoning and parsimony.
+
+- Model 1 is the most parsimonious specification, using only the term spread (SPREAD) as a predictor. This indicates that although the yield curve slope is correlated with future output, its overall explanatory power is very low. Most of the variation in GNP growth remains unexplained.
+
+- Model 2 adds the ex-ante real federal funds rate (RFF.G). The additional variable yields minimal improvement in R², and RFF.G is not statistically significant. The economic interpretation is also consistent: monetary policy reacts to short-term conditions and does not add much explanatory power beyond the information already embedded in the yield curve.
+
+- Model 3 incorporates all macroeconomic controls (GLI.G, LDEP.G, GNPDEF.G). While the inclusion of these variables increases the overall explanatory power of the model, the results show that **only GLI.G remains statistically significant**, whereas the other controls are not. Despite this, the term spread (SPREAD) continues to exhibit a strong and significant relationship with future GNP growth, indicating that it retains independent predictive power even after accounting for additional macroeconomic variables.
+
+## 6.1 Model Comparison Using AIC and BIC
+
+Before evaluating forecasting accuracy, it is useful to compare the three models using information criteria. The Akaike Information Criterion (AIC) and Bayesian Information Criterion (BIC) penalize model complexity and reward goodness of fit, helping to determine whether additional variables genuinely improve the model’s explanatory power.
+
+```{r aic-bic, echo=TRUE}
+
+# Find minimum values for highlighting
+aic_values <- c(
+  AIC(eqn1.ols),
+  AIC(eqn2.ols),
+  AIC(eqn3.ols)
+)
+bic_values <- c(
+  BIC(eqn1.ols),
+  BIC(eqn2.ols),
+  BIC(eqn3.ols)
+)
+
+min_aic_idx <- which.min(aic_values)
+min_bic_idx <- which.min(bic_values)
+
+aicbic_tbl <- data.frame(
+  Model = c("Model 1: SPREAD",
+            "Model 2: SPREAD + RFF.G",
+            "Model 3: Full Macro Model"),
+  AIC = round(aic_values, 3),
+  BIC = round(bic_values, 3),
+  Interpretation = c(
+    "Simplest and best by BIC",
+    "Worst on both criteria",
+    "Best by AIC, worst by BIC"
+  )
+)
+
+kable(aicbic_tbl,
+      caption = "Table: AIC and BIC Comparison Across Models",
+      booktabs = TRUE,
+      align = "lccc") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position"),
+                stripe_color = "red!5!white") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  # Highlight best AIC
+  column_spec(2, bold = ifelse(1:3 == min_aic_idx, TRUE, FALSE),
+              color = ifelse(1:3 == min_aic_idx, "blue", "black")) %>%
+  # Highlight best BIC
+  column_spec(3, bold = ifelse(1:3 == min_bic_idx, TRUE, FALSE),
+              color = ifelse(1:3 == min_bic_idx, "green!50!black", "black"))
+```
+
+**Interpretation:** 
+- AIC and BIC provide contradictory recommendations. Model 3 achieves the lowest AIC (861.95), while Model 1 achieves the lowest BIC (873.17). However, the AIC difference is negligible (only 1.3 points), whereas the BIC difference is substantial (11.9 points).
+
+- BIC penalizes complexity more heavily than AIC and strongly favors Model 1, suggesting the additional macroeconomic variables in Model 3 do not sufficiently improve fit to justify their inclusion. Based on these criteria, the term spread (SPREAD) alone appears sufficient for predicting GNP future growth.
+
+However, information criteria measure in-sample fit only and should not be used alone for model selection. The true test of model performance comes from out-of-sample cross-validation, presented in Section 6.2 below.
+
+\newpage
+## 6.2 Rolling Window Cross-Validation
+```{r rolling-window-cv, echo=TRUE}
+
+# EXPANDING WINDOW CV
+# Specify the cross validation method: expanding window forecasts
+# initialWindow: 120 quarters (approximately 30 years) 
+# horizon: 1-step ahead forecast
+# fixedWindow: FALSE means window grows over time (expanding window)
+ctrl_expand <- trainControl(
+  method = "timeslice",
+  initialWindow = 120,
+  horizon = 1,
+  fixedWindow = FALSE,  # FALSE = expanding window
+  savePredictions = TRUE
+)
+
+# Model 1 – Spread only
+set.seed(123)
+exp_m1 <- train(
+  GNP.FG ~ SPREAD,
+  data = DATA,
+  method = "lm",
+  trControl = ctrl_expand
+)
+err_m1 <- exp_m1$pred$obs - exp_m1$pred$pred
+rmse_m1 <- sqrt(mean(err_m1^2))
+mae_m1  <- mean(abs(err_m1))
+
+# Model 2 – SPREAD + RFF.G
+set.seed(123)
+exp_m2 <- train(
+  GNP.FG ~ SPREAD + RFF.G,
+  data = DATA,
+  method = "lm",
+  trControl = ctrl_expand
+)
+err_m2 <- exp_m2$pred$obs - exp_m2$pred$pred
+rmse_m2 <- sqrt(mean(err_m2^2))
+mae_m2  <- mean(abs(err_m2))
+
+# Model 3 – Full macro model
+set.seed(123)
+exp_m3 <- train(
+  GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G,
+  data = DATA,
+  method = "lm",
+  trControl = ctrl_expand
+)
+err_m3 <- exp_m3$pred$obs - exp_m3$pred$pred
+rmse_m3 <- sqrt(mean(err_m3^2))
+mae_m3  <- mean(abs(err_m3))
+
+# Find minimum values for highlighting
+rmse_vals <- c(rmse_m1, rmse_m2, rmse_m3)
+mae_vals <- c(mae_m1, mae_m2, mae_m3)
+min_rmse_idx <- which.min(rmse_vals)
+min_mae_idx <- which.min(mae_vals)
+
+# SUMMARY TABLE
+cv_summary <- data.frame(
+  Model = c("Model 1: SPREAD", "Model 2: SPREAD + RFF.G", "Model 3: Full Model"),
+  RMSE = round(rmse_vals, 4),
+  MAE = round(mae_vals, 4)
+)
+
+kable(cv_summary,
+      caption = "Expanding Window Cross-Validation Results",
+      booktabs = TRUE,
+      align = "lcc") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position", "scale_down"),
+                stripe_color = "red!5!white",
+                font_size = 9) %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  # Highlight best RMSE
+  column_spec(2, bold = ifelse(1:3 == min_rmse_idx, TRUE, FALSE),
+              color = ifelse(1:3 == min_rmse_idx, "blue", "black")) %>%
+  # Highlight best MAE
+  column_spec(3, bold = ifelse(1:3 == min_mae_idx, TRUE, FALSE),
+              color = ifelse(1:3 == min_mae_idx, "green!50!black", "black"))
+```
+
+
+**Interpretation**
+
+The expanding-window cross-validation confirms the BIC recommendation from the in-sample analysis. **Model 1 (SPREAD only) achieves the lowest forecast errors (RMSE = 2.3992, MAE = 1.4781)**, outperforming both Model 2 and the Full Macro Model. This validates BIC's preference for parsimony: while Model 3 achieved marginally better in-sample fit (lowest AIC), it performs notably worse in true out-of-sample forecasting. Model 1's superior out-of-sample performance demonstrates that the term spread alone provides the most robust and generalizable predictor of GNP future growth.
+
+Since forecasting models should be evaluated primarily on their out-of-sample performance, we prioritize predictive accuracy over in-sample fit. The cross-validation results decisively favor Model 1, confirming BIC's preference for parsimony over AIC's slight preference for Model 3. **Therefore, Model 1 (SPREAD only) is selected as the preferred specification for diagnostic analysis and forecasting, as it achieves both the lowest BIC and superior out-of-sample forecast accuracy**.
+
+\newpage
+
+# 7. Regression Diagnosis
+
+```{r MLR, echo=TRUE}
+
+## Model 1 - selected as best model for diagnosis
+eqn1.ols <- lm(GNP.FG ~ SPREAD, data = DATA)
+res1 <- eqn1.ols$residuals
+y_hat1 <- eqn1.ols$fitted.values
+
+## Model 3 - for comparison
+eqn3.ols <- lm(GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G, data = DATA)
+res3 <- eqn3.ols$residuals
+y_hat3 <- eqn3.ols$fitted.values
+```
+
+## 7.1 Residual Autocorrelation Plot {#residual-autocorr}
+```{r ACF, echo=TRUE}
+
+# Compute ACF values manually
+acf_res <- acf(res1, lag.max = 12, plot = FALSE)
+
+# Convert to data frame for ggplot, excluding lag 0 for coloring
+acf_df <- with(acf_res, data.frame(
+  lag = lag,
+  acf = acf,
+  ci_upper = rep(1.96/sqrt(n.used), length(lag)),
+  ci_lower = rep(-1.96/sqrt(n.used), length(lag))
+)) %>%
+  mutate(color_flag = ifelse(lag == 0, "Lag 0",
+                      ifelse(acf > ci_upper | acf < ci_lower, "Significant", "Not Significant")))
+
+# Plot with colored spikes, CI bounds, and custom x-axis
+ggplot(acf_df, aes(x = lag, y = acf, color = color_flag)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_hline(aes(yintercept = ci_upper), linetype = "dashed", color = "gray40") +
+  geom_hline(aes(yintercept = ci_lower), linetype = "dashed", color = "gray40") +
+  geom_segment(aes(xend = lag, yend = 0), size = 1.2) +
+  scale_color_manual(values = c("Significant" = "red", "Not Significant" = "steelblue", "Lag 0" = "steelblue")) +
+  scale_x_continuous(breaks = seq(0, 12, by = 2)) +
+  labs(
+    title = "Autocorrelation Function (ACF) of Residuals - Model 1",
+    x = "Lag",
+    y = "ACF"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", color = "blue", hjust = 0.5),
+    axis.title.x = element_text(face = "bold", color = "darkblue"),
+    axis.title.y = element_text(face = "bold", color = "darkblue"),
+    legend.position = "none"
+  )
+```
+
+\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=Model 3 Comparison]
+\textbf{Robustness Check:} Model 3's ACF plot similarly shows significant autocorrelation at the first three lags, with spikes above the confidence bands. The pattern is consistent with Model 1, confirming autocorrelation. Both models require Newey-West correction.
+\end{tcolorbox}
+
+## 7.2 Breusch–Godfrey (BG) Test
+
+The lag order is set to **3** for both models, based on their respective autocorrelation plots, which showed significant autocorrelations up to approximately the third lag.
+
+The **BG auxiliary regression** for Model 1 is given as the following:
+$$
+\begin{aligned}
+\hat{u}_t &= \alpha_1 
++ \alpha_2 \, \text{SPREAD} +  \rho_1 \hat{u}_{t-1} + \rho_2 \hat{u}_{t-2} + \rho_3 \hat{u}_{t-3} 
++ v_t
+\end{aligned}
+$$
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black]
+$H_0: \ \rho_1 = \rho_2 = \rho_3 = 0 \quad$ (No autocorrelation in residuals) \\
+$H_1: \ \text{At least one of } \rho_1, \rho_2, \rho_3 \neq 0 \quad$ (Residuals exhibit autocorrelation)
+\end{tcolorbox}
+
+### i. BG Hypothesis Test
+```{r BG Test, echo=TRUE}
+
+# Run Breusch-Godfrey test for both models
+bg_res1 <- bgtest(eqn1.ols, order = 3, type = "Chisq")
+bg_res3 <- bgtest(eqn3.ols, order = 3, type = "Chisq")
+
+# Prepare comparison data frame
+conclusions <- data.frame(
+  Model = c("Model 1 (Primary)", "Model 3 (Comparison)"),
+  `Significance Level` = c("5%", "5%"),
+  `BG Test Statistic` = c(round(bg_res1$statistic, 2), round(bg_res3$statistic, 2)),
+  `df` = c(bg_res1$parameter, bg_res3$parameter),
+  Decision = c(
+    ifelse(bg_res1$p.value < 0.05, "Reject H0", "Fail to Reject H0"),
+    ifelse(bg_res3$p.value < 0.05, "Reject H0", "Fail to Reject H0")
+  ),
+  `p-value` = c(
+    formatC(bg_res1$p.value, format = "e", digits = 2),
+    formatC(bg_res3$p.value, format = "e", digits = 2)
+  )
+)
+
+# Display table with kable and kableExtra
+kable(conclusions,
+      caption = "Breusch-Godfrey Test for Autocorrelation (Order 3)",
+      booktabs = TRUE,
+      align = "lccccc",
+      col.names = c("Model", "Significance Level", "BG Test Statistic", "df", "Decision", "p-value")) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  row_spec(1, bold = TRUE, background = "yellow!10")  # Highlight Model 1
+```
+
+**Interpretation**
+
+The Breusch–Godfrey test for **Model 1 yields a p-value of 1.63e-21**, providing overwhelming evidence to reject the null hypothesis at the 5% significance level. This confirms significant autocorrelation in the residuals, as suggested by the ACF plot. Therefore, robust estimation using Newey–West standard errors is necessary.
+
+Model 3 shows similarly strong evidence of autocorrelation (p = 2.48e-21). Both models require the same correction strategy.
+
+*Note*: The ninth lag was not included in the BG test for either model because the spike only touches the threshold and is likely attributable to random variation rather than a systematic pattern.
+
+### ii. Newey–West Estimates
+
+Since the Breusch–Godfrey test indicates strong serial correlation (p-value < 0.01) in both models, we apply the Newey–West estimator with lag = 3, selected based on the ACF evidence in Section 7.1. All subsequent analysis in this report will rely on these Newey–West–corrected estimates, as established in Section 4.2.
+
+
+```{r OLS vs NW, echo=TRUE}
+# --- Step 1: Compute OLS p-values and round estimates ---
+ols_res1 <- broom::tidy(eqn1.ols) %>%
+  select(term, estimate, p.value) %>%
+  rename(`pvalue (OLS)` = p.value) %>%
+  mutate(estimate = round(estimate, 4))
+
+# --- Step 2: Compute Newey-West p-values ---
+eqn1.nw <- NeweyWest(eqn1.ols, lag = 3)
+nw_res1 <- coeftest(eqn1.ols, vcov = eqn1.nw) %>%
+  broom::tidy() %>%
+  select(term, p.value) %>%
+  rename(`pvalue (NW)` = p.value)
+
+# --- Step 3: Combine OLS and NW p-values, check significance change ---
+comparison_df1 <- ols_res1 %>%
+  left_join(nw_res1, by = "term") %>%
+  mutate(
+    `Change in Decision (95% CI)` = case_when(
+      (`pvalue (OLS)` < 0.05 & `pvalue (NW)` >= 0.05) ~ "Yes",
+      (`pvalue (OLS)` >= 0.05 & `pvalue (NW)` < 0.05) ~ "Yes",
+      TRUE ~ "No"
+    ),
+    `pvalue (OLS)` = formatC(`pvalue (OLS)`, format = "f", digits = 9),
+    `pvalue (NW)` = formatC(`pvalue (NW)`, format = "f", digits = 9)
+  )
+
+# --- Step 4: Display table ---
+kable(comparison_df1,
+      caption = "Comparison of OLS and Newey-West p-values - Model 1",
+      booktabs = TRUE,
+      align = "lccc") %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+**Interpretation**
+
+Comparing the OLS and Newey West results shows that the **inference for both the intercept and the SPREAD variable remains unchanged**. Although the Newey West p-values are larger as expected when adjusting for serial correlation they still do not cross the 5% significance threshold. Therefore, neither coefficient becomes significant nor changes its statistical conclusion under the robust estimation. The overall message is that accounting for autocorrelation does not alter the substantive interpretation of the model.
+
+\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=Model 3 Comparison]
+\textbf{Robustness Check:} In Model 3, the Newey-West correction reveals that \textbf{SPREAD remains the only statistically significant predictor}. Variables such as GLI.G (which appeared significant under OLS) become insignificant after correcting for autocorrelation, with p-values rising above 0.05. Other controls (RFF.G, LDEP.G, GNPDEF.G) remain insignificant under both OLS and Newey-West estimation.
+\textbf{Key Implication:} This finding strongly supports Model 1's parsimonious specification. The additional variables in Model 3 do not provide robust explanatory power once serial correlation is properly accounted for. SPREAD is the dominant and most reliable predictor across both specifications.
+\end{tcolorbox}
+
+*Note on Heteroskedasticity*: Since the data is time-series and the Breusch–Godfrey (BG) test indicates significant serial correlation (p-value < 0.01) in both models, a separate heteroskedasticity analysis is unnecessary, as the Newey–West estimator already adjusts for both autocorrelation and heteroskedasticity.
+
+## 7.3 Normality
+
+### i. Normality of Residuals: QQ Plot
+
+```{r QQ-plot, echo=TRUE}
+# Extract residuals from Model 1
+residuals_1 <- residuals(eqn1.ols)
+
+# Create QQ plot
+qqnorm(residuals_1, main = "QQ Plot of Model 1 Residuals")
+qqline(residuals_1, col = "blue", lwd = 2)
+```
+```{r Residual-Histogram, echo=TRUE}
+
+# Extract residuals from Model 1
+res <- residuals(eqn1.ols)
+
+# Put residuals in a data frame
+df <- data.frame(res = res)
+
+# Plot histogram with kernel and normal density
+ggplot(df, aes(x = res)) +
+  geom_histogram(aes(y = after_stat(density)), 
+                 bins = 15, colour = "black", fill = "grey") +
+  stat_density(geom = "line", aes(colour = "kernel"), size = 1) +
+  stat_function(fun = dnorm, args = list(mean = mean(res), sd = sd(res)),
+                aes(colour = "normal"), size = 1, linetype = "dashed") +
+  scale_colour_manual(name = "", values = c("kernel" = "orange", "normal" = "blue"),
+                      labels = c("Kernel density", "Normal density")) +
+  labs(title = "Histogram of Model 1 Residuals with Kernel and Normal Density",
+       x = "Residuals", y = "Density") +
+  theme_minimal()
+```
+### ii. Shapiro-Wilk Test
+```{r ShapiroW, echo=TRUE}
+# --- Normality Tests ---
+
+# Shapiro–Wilk Test for both models
+shapiro_res1 <- shapiro.test(res1)
+shapiro_res3 <- shapiro.test(res3)
+
+# --- Create summary table ---
+normality_df <- data.frame(
+  Model = c("Model 1 (Primary)", "Model 3 (Comparison)"),
+  Test = c("Shapiro–Wilk", "Shapiro–Wilk"),
+  Statistic = c(round(shapiro_res1$statistic, 4), round(shapiro_res3$statistic, 4)),
+  `p-value` = c(formatC(shapiro_res1$p.value, digits = 6), formatC(shapiro_res3$p.value, digits = 6)),
+  Decision = c(
+    ifelse(shapiro_res1$p.value < 0.05, "Reject H0 (Not Normal)", "Fail to Reject H0 (Normal)"),
+    ifelse(shapiro_res3$p.value < 0.05, "Reject H0 (Not Normal)", "Fail to Reject H0 (Normal)")
+  )
+)
+
+# --- Display as styled table ---
+kable(normality_df,
+      caption = "Normality Test for Regression Residuals (Shapiro–Wilk)",
+      booktabs = TRUE,
+      align = "llccc",
+      col.names = c("Model", "Test", "Statistic", "p-value", "Decision")) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  row_spec(1, bold = TRUE, background = "yellow!10")  # Highlight Model 1
+
+
+```
+
+**Interpretation**
+
+The QQ plot and residual histogram for Model 1 show that while the residuals are roughly normal in the center, they deviate noticeably in the tails, indicating heavier tails and slight skewness. The Shapiro–Wilk test (W = 0.9319, p = 4.78469e-08) formally confirms this by rejecting the null hypothesis of normality.
+
+Model 3 Comparison: Model 3 exhibits similar non-normality (W = 0.9068, p = 6.94598e-10), with even stronger evidence of departure from normality. 
+
+## 7.4 Multicollinearity
+
+Multicollinearity analysis is only applicable to Model 3, as Model 1 contains a single predictor (SPREAD). By definition, multicollinearity cannot exist in a simple linear regression.
+
+```{r VIF, echo=TRUE}
+# Calculate VIF for Model 3
+vif_model3 <- vif(eqn3.ols)
+
+# Create VIF table
+vif_table <- data.frame(
+  Variable = names(vif_model3),
+  VIF = round(as.numeric(vif_model3), 3)
+)
+
+# Display VIF table
+kable(vif_table,
+      caption = "Variance Inflation Factors (VIF) - Model 3",
+      booktabs = TRUE,
+      align = "lc",
+      col.names = c("Variable", "VIF")) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+**Interpretation**
+
+The VIF values for all predictors in Model 3 are reported above. As a general rule of thumb:  
+- VIF < 5: Low multicollinearity (acceptable).  
+- 5 ≤ VIF ≤ 10: Moderate multicollinearity (caution advised).  
+- VIF > 10: High multicollinearity (problematic).  
+
+All VIF values in Model 3 are well below 5, with the highest VIF being 1.260 for SPREAD, indicating **low multicollinearity** among the predictors. Since all VIF values are close to 1 (ranging from 1.082 to 1.260), this suggests that the predictors are nearly orthogonal to each other. 
+
+This finding is important because it confirms that:
+1. **The coefficient estimates are reliable** - standard errors are not inflated by multicollinearity
+2. **Each predictor provides independent information** - the variables capture distinct aspects of economic conditions
+3. **Hypothesis tests are valid** - the t-statistics and p-values reported in the regression output accurately reflect the statistical significance of each predictor
+4. **The model is stable** - small changes in the data are unlikely to cause large changes in coefficient estimates
+
+The absence of multicollinearity strengthens confidence in the substantive interpretation of Model 3's coefficients and supports the validity of the diagnostic tests that follow.
+
+
+
+## 7.5 Functional Form 
+
+### i. Ramsey's RESET Test
+The auxiliary regression for the Ramsey's RESET test is specified as:
+
+$$
+\begin{aligned}
+\text{GNP.FG}_t &= \beta_1 
++ \beta_2 \, \text{SPREAD} +  \gamma_1 \hat{y}_t^2 + \gamma_2 \hat{y}_t^3 + v_t
+\end{aligned}
+$$
+
+
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black]
+$H_0: \ \gamma_1 = \gamma_2 = 0 \quad$ (Model functional form is correctly specified) \\
+$H_1: \ \text{At least one of } \gamma_1 \text{ or } \gamma_2 \neq 0 \quad$ (Model functional form is misspecified)
+\end{tcolorbox}
+
+```{r Wald Test, echo=TRUE}
+
+# --- Step 1: Prepare auxiliary data for Model 1 ---
+y_hat <- fitted(eqn1.ols)
+reset.data1 <- data.frame(
+  GNP.FG = eqn1.ols$model$GNP.FG,
+  SPREAD = eqn1.ols$model$SPREAD,
+  y_hat2 = y_hat^2,
+  y_hat3 = y_hat^3
+)
+
+# Remove any NAs
+reset.data1 <- na.omit(reset.data1)
+
+# --- Step 2: Two auxiliary regressions ---
+# Restricted: only original variables
+reset.restricted <- lm(GNP.FG ~ SPREAD, data = reset.data1)
+
+# Unrestricted: original variables + powers of fitted values
+reset.unrestricted <- lm(GNP.FG ~ SPREAD + y_hat2 + y_hat3, data = reset.data1)
+
+# --- Step 3: Wald test with Newey-West HAC ---
+reset.aux.nw <- NeweyWest(reset.unrestricted, lag = 3, prewhite = FALSE)
+wald_result1 <- waldtest(reset.restricted, reset.unrestricted, 
+                         test = "Chisq", vcov = reset.aux.nw)
+
+# Extract test statistics
+wald_stat1 <- wald_result1$Chisq[2]
+p_value1 <- wald_result1$`Pr(>Chisq)`[2]
+
+# Create results table
+reset_table1 <- data.frame(
+  Test = "Ramsey RESET (Wald Test)",
+  Chi_Sq = round(wald_stat1, 3),
+  df = 2,
+  p_value = sprintf("%.4f", p_value1),
+  Decision = ifelse(p_value1 < 0.05, "Reject H0 (Misspecification)", "Fail to Reject H0 (No Misspecification)")
+)
+
+# Display table
+kable(reset_table1,
+      caption = "Ramsey RESET Test for Functional Form - Model 1 (Lag 3)",
+      booktabs = TRUE,
+      align = "lcccc") %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+\newpage
+### ii. Robustness of Ramsey's RESET Test
+
+```{r WT Robustness, echo=TRUE}
+
+# --- Prepare auxiliary data ---
+y_hat <- fitted(eqn1.ols)
+reset.data1 <- data.frame(
+  GNP.FG = eqn1.ols$model$GNP.FG,
+  SPREAD = eqn1.ols$model$SPREAD,
+  y_hat2 = y_hat^2,
+  y_hat3 = y_hat^3,
+  y_hat4 = y_hat^4
+)
+reset.data1 <- na.omit(reset.data1)
+
+# --- Restricted model (original specification) ---
+reset.restricted_m1 <- lm(GNP.FG ~ SPREAD, data = reset.data1)
+
+# --- Unrestricted models with different powers ---
+reset.aux.2_3_m1 <- lm(GNP.FG ~ SPREAD + y_hat2 + y_hat3, data = reset.data1)
+reset.aux.2_3_4_m1 <- lm(GNP.FG ~ SPREAD + y_hat2 + y_hat3 + y_hat4, data = reset.data1)
+
+# --- Newey-West robust covariance ---
+reset.nw.2_3_m1 <- NeweyWest(reset.aux.2_3_m1, lag = 3, prewhite = FALSE)
+reset.nw.2_3_4_m1 <- NeweyWest(reset.aux.2_3_4_m1, lag = 3, prewhite = FALSE)
+
+# --- Wald tests ---
+wald_2_3_m1 <- waldtest(reset.restricted_m1, reset.aux.2_3_m1, 
+                        test = "Chisq", vcov = reset.nw.2_3_m1)
+wald_2_3_4_m1 <- waldtest(reset.restricted_m1, reset.aux.2_3_4_m1, 
+                          test = "Chisq", vcov = reset.nw.2_3_4_m1)
+
+# --- Create results table ---
+reset_table_robust_m1 <- data.frame(
+  Test = c("RESET Power 2 & 3", "RESET Power 2, 3 & 4"),
+  Chi_Sq_Statistic = round(c(wald_2_3_m1$Chisq[2], wald_2_3_4_m1$Chisq[2]), 3),
+  df = c(wald_2_3_m1$Df[2], wald_2_3_4_m1$Df[2]),
+  p_value = sprintf("%.4f", c(wald_2_3_m1$`Pr(>Chisq)`[2], wald_2_3_4_m1$`Pr(>Chisq)`[2])),
+  Decision = ifelse(c(wald_2_3_m1$`Pr(>Chisq)`[2], wald_2_3_4_m1$`Pr(>Chisq)`[2]) < 0.05, 
+                    "Reject H0 (Misspecification)", "Fail to Reject H0 (No Misspecification)")
+)
+```
+
+```{r RRT, echo=TRUE}
+# --- Display table ---
+kable(reset_table_robust_m1,
+      caption = "Ramsey RESET Test Robustness - Model 1 (Lag 3)",
+      booktabs = TRUE,
+      align = "lcccc") %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+**Interpretation**
+
+The Lag 3 RESET test for Model 1 indicates no functional form issues (p = 0.1782), suggesting the model's specification is adequate. Robustness checks using higher-order powers at Lag 3 also fail to reject the null (p = 0.1971).
+Together, **these results show consistent evidence that Model 1 does not suffer from nonlinear misspecification or omitted nonlinear terms. The linear relationship between SPREAD and GNP.FG is appropriately specified**.
+
+\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=Model 3 Comparison]
+\textbf{Robustness Check:} Model 3 also passes the RESET test (p = 0.1207), with robustness checks yielding p-values of 0.1841 and 0.2415 for higher-order specifications.
+\textbf{Key Finding:} Both models demonstrate correct functional form specification. The consistency across Model 1 (parsimonious) and Model 3 (expanded) confirms that the linear specification is appropriate and that no important nonlinear relationships are being omitted. This further validates the adequacy of Model 1's simple specification.
+\end{tcolorbox}
+
+## 7.6 Parameter Stability
+
+### i. CUSUM Test
+
+```{r CUSUM Test_model1, echo=TRUE}
+
+# Run CUSUM test for Model 1
+cusum1 <- efp(GNP.FG ~ SPREAD, data = DATA_ts, type = "Rec-CUSUM")
+plot(cusum1,
+alpha = 0.05,
+main = "CUSUM Test for Parameter Stability - Model 1",
+sub = "Recursive residuals with 5% significance bounds",
+col = "steelblue",
+lwd = 2,
+lty = 1,
+xlab = "Date",
+ylab = "CUSUM"
+)
+
+```
+
+**Interpretation**
+
+For most of the sample, the CUSUM statistic stays within the boundaries, indicating general parameter stability. However, there is a brief point around 2020 where the path touches and slightly crosses the lower bound, suggesting a localized period of mild instability. Despite this small violation, the deviation is short-lived and the series quickly returns inside the bounds. Overall, **the evidence points to mostly stable parameters, with only a minor indication of a potential structural shift**.
+
+```{r CUSUM Test_model3, echo=TRUE}
+
+# Run CUSUM test
+cusum3 <- efp(GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G, data = DATA_ts, type = "Rec-CUSUM")
+plot(cusum3,
+alpha = 0.05,
+main = "CUSUM Test for Parameter Stability - Model 3",
+sub = "Recursive residuals with 5% significance bounds",
+col = "steelblue",
+lwd = 2,
+lty = 1,
+xlab = "Date",
+ylab = "CUSUM")
+```
+
+\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=Model 3 Comparison]
+\textbf{Robustness Check:} Model 3's CUSUM test reveals serious parameter instability. The recursive residuals remain within the 5\% significance bounds until approximately 2008, after which the CUSUM statistic crosses below the lower bound and continues to decline sharply throughout the remainder of the sample period. By the end of the sample (around 2020), the statistic reaches approximately -3.5 to -4, far outside the acceptable range.
+
+\textbf{Implication:} This persistent and substantial deviation indicates a structural break occurred around 2008, coinciding with the Global Financial Crisis, after which the relationship between the macroeconomic variables and GNP future growth fundamentally changed. The severity of this parameter instability is a serious problem for Model 3, suggesting that the additional control variables (RFF.G, GLI.G, LDEP.G, GNPDEF.G) may have unstable coefficients over time. In contrast, Model 1's SPREAD-only specification demonstrates superior parameter stability. This structural instability provides additional justification for selecting Model 1 as the preferred specification. 
+\end{tcolorbox}
+
+\newpage
+### ii. Chow Structural Break Test
+
+Sample Split
+
+We split the sample at 2008Q1, corresponding to the onset of the U.S. Subprime Mortgage Crisis, which subsequently triggered the Global Financial Crisis (GFC). This period led to major dislocations in U.S. labor markets, monetary policy, risk-asset valuations, foreign investment flows, and industrial output;  all key predictors in our model.
+
+```{r Sample Split, echo=TRUE}
+break_2008 <- which(DATA$dates >= as.Date("2008-01-01"))[1]
+n_pre <- break_2008 - 1
+n_post <- nrow(DATA) - break_2008
+
+sample_table <- data.frame(
+  Period = c("Pre-2008Q1", "Post-2008Q1"),
+  Observations = c(n_pre, n_post)
+)
+kable(sample_table,
+      caption = "Sample Size Before and After 2008Q1 Split",
+      booktabs = TRUE,
+      align = "lc",
+      col.names = c("Sub-Sample", "Number of Observations")) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white")
+```
+
+
+Both sub-samples contain more than 30 observations (136 pre-crisis and 63 post-crisis), satisfying the minimum requirement for the Chow structural break test. Therefore, we proceed with the formal Chow test instead of the predictive failure test.
+
+The auxiliary regression for the Chow's Structural Break test is specified as:
+
+$$
+\begin{aligned}
+\text{GNP.FG}_t = \beta_1 + \beta_2 \text{SPREAD}_t + \alpha_1 D_{t} + \alpha_2 (D_{t} \cdot \text{SPREAD}_t) + v_t
+\end{aligned}
+$$
+
+**Hypothesis**
+
+\begin{tcolorbox}[colback=blue!5!white,colframe=blue!50!black]
+$H_0: \ \alpha_1 = \alpha_2  = 0 \quad$ (No structural break; slopes are stable pre- and post-crisis) \\
+$H_1: \ \alpha_1 \ or \ \alpha_2 \neq 0 \quad$ (Structural break exists; slopes change after crisis)
+\end{tcolorbox}
+
+Because serial correlation was detected earlier, the Wald test based on Newey–West robust covariance is preferred over the classical Chow F-test, which assumes homoskedastic and uncorrelated errors.
+```{r Chow Structural BreakTest with NW, echo=TRUE}
+# Create crisis dummy
+DATA$D_2008 <- ifelse(DATA$dates >= as.Date("2008-01-01"), 1, 0)
+
+# --- MODEL 1 ---
+# Unrestricted model with interactions
+eq_full_m1 <- lm(GNP.FG ~ D_2008*SPREAD, data = DATA)
+
+# Restricted model (no break)
+eq_rest_m1 <- lm(GNP.FG ~ SPREAD, data = DATA)
+
+# Wald test
+wald_res_m1 <- waldtest(eq_rest_m1, eq_full_m1, vcov = NeweyWest(eq_full_m1), test = "Chisq")
+
+# --- MODEL 3 ---
+# Unrestricted model
+eq_full_m3 <- lm(GNP.FG ~ D_2008*(SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G), data = DATA)
+
+# Restricted model
+eq_rest_m3 <- lm(GNP.FG ~ SPREAD + RFF.G + GLI.G + LDEP.G + GNPDEF.G, data = DATA)
+
+# Wald test
+wald_res_m3 <- waldtest(eq_rest_m3, eq_full_m3, vcov = NeweyWest(eq_full_m3), test = "Chisq")
+
+# Create comparison table
+chow_comparison <- data.frame(
+  Model = c("Model 1 (Primary)", "Model 3 (Comparison)"),
+  BreakPoint = c("2008Q1", "2008Q1"),
+  Chi_Sq = c(round(wald_res_m1$Chisq[2], 3), round(wald_res_m3$Chisq[2], 3)),
+  df = c(wald_res_m1$Df[2], wald_res_m3$Df[2]),
+  p_value = c(
+    formatC(wald_res_m1$`Pr(>Chisq)`[2], digits=4, format="f"),
+    formatC(wald_res_m3$`Pr(>Chisq)`[2], digits=4, format="e")
+  ),
+  Decision = c(
+    ifelse(wald_res_m1$`Pr(>Chisq)`[2] < 0.05, "Reject H0", "Fail to Reject H0"),
+    ifelse(wald_res_m3$`Pr(>Chisq)`[2] < 0.05, "Reject H0", "Fail to Reject H0")
+  )
+)
+
+kable(chow_comparison,
+      caption = "Wald Structural Break Test at 2008Q1 (Newey–West Robust) - Comparison",
+      booktabs = TRUE,
+      align = "lccccc",
+      col.names = c("Model", "Break Point", "Chi-Sq", "df", "p-value", "Decision")) %>%
+  kable_styling(latex_options = c("HOLD_position","striped"),
+                stripe_color = "red!5!white",
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  row_spec(1, bold = TRUE, background = "yellow!10")  # Highlight Model 1
+```
+
+\begin{tcolorbox}[colback=gray!5!white,colframe=gray!75!black,title=Model 3 Comparison - Critical Difference]
+\textbf{Contrasting Result:} Model 3 shows a \textbf{statistically significant structural break} at 2008Q1 (Chi-square = 21.912, p = 0.0013). The Wald test strongly rejects the null hypothesis, indicating that the relationship between the predictors and GNP growth changed after the financial crisis.
+\textbf{Key Interpretation:} The divergent results between Model 1 and Model 3 are highly informative:
+\begin{itemize}
+\item \textbf{Model 1's stability} suggests that the core relationship between the yield curve slope (SPREAD) and economic growth remained fundamentally intact through the crisis
+\item \textbf{Model 3's instability} indicates that the additional control variables (RFF.G, GLI.G, LDEP.G, GNPDEF.G) experienced structural changes in their relationship with GNP growth
+\item This implies that while these additional variables may have been affected by regime changes during the crisis, the SPREAD variable provides a more robust and stable signal
+\end{itemize}
+\textbf{Implication for Model Selection:} The parameter stability of Model 1 compared to the structural break in Model 3 provides strong evidence in favor of the parsimonious specification. Model 1 not only achieves similar or better predictive performance with fewer variables, but it also demonstrates \textbf{greater robustness across different economic regimes}. This stability is particularly valuable for forecasting and policy analysis, where parameter constancy is highly desirable.
+\end{tcolorbox}
+
+**Interpretation**
+
+The unrestricted model includes both a 2008 dummy and its interaction with SPREAD to test for a potential structural break during the 2008 financial crisis. The Newey–West robust estimates show that: 
+- The main SPREAD coefficient remains positive and highly significant, indicating a stable relationship overall.
+
+- The crisis dummy (D_2008) and the interaction term (D_2008:SPREAD) are not statistically significant, suggesting no strong evidence that either the intercept or slope changed in 2008.
+
+- The Wald test formally evaluates whether the coefficients associated with the 2008 dummy jointly differ from zero. With a Chi-square statistic of 4.81 and a p-value of 0.0903, **we fail to reject the null hypothesis of no structural break at the 5% level**.
+
+Overall, **the results indicate no statistically significant structural break at 2008Q1**, although the p-value is moderately close to significance, suggesting only weak evidence of a possible shift rather than a clear structural change.
+
+**Synopsis of regression diagnosis for Model 1 vs Model 3**
+The detailed diagnostics below concentrate on Model 1, our parsimonious specification focusing on the SPREAD variable. Model 3 results are provided for robustness verification and to demonstrate that additional controls do not fundamentally alter the key diagnostic conclusions.
+```{r model 1 vs model 3, echo=TRUE}
+final_summary <- data.frame(
+  Diagnostic = c(
+    "Autocorrelation",
+    "Normality",
+    "Functional Form",
+    "Structural Stability",
+    "Multicollinearity"
+  ),
+  `Model 1 Finding` = c(
+    "Present (BG p<0.01); corrected with NW",
+    "Non-normal residuals (SW p<0.01)",
+    "Correctly specified (RESET p=0.18)",
+    "No structural break (Chow p=0.09)",
+    "N/A (single predictor)"
+  ),
+  `Model 3 Finding` = c(
+    "Present (BG p<0.01); corrected with NW",
+    "Non-normal residuals (SW p<0.01)",
+    "Correctly specified (RESET p=0.06)",
+    "Structural break detected (Chow p<0.01)",
+    "Low VIF (max=1.26); no concern"
+  ),
+  `Implication` = c(
+    "Both models require robust SE",
+    "Consistent across models; use robust SE",
+    "Linear specification appropriate",
+    "Model 1 more stable across regimes",
+    "Model 3 predictors independent"
+  )
+)
+
+kable(final_summary,
+      caption = "Comprehensive Diagnostic Summary: Model 1 vs Model 3",
+      booktabs = TRUE,
+      align = "llll",
+      col.names = c("Diagnostic Test", "Model 1 (Primary)", "Model 3 (Comparison)", "Key Implication")) %>%
+  kable_styling(latex_options = c("HOLD_position", "striped", "scale_down"),
+                stripe_color = "red!5!white",
+                position = "center",
+                font_size = 10) %>%
+  row_spec(0, bold = TRUE, background = "red!50!black", color = "white") %>%
+  column_spec(1, bold = TRUE, width = "3cm") %>%
+  column_spec(2, background = "yellow!10", width = "4cm") %>%
+  column_spec(3, width = "4cm") %>%
+  column_spec(4, width = "4cm")
+  
+```
+
+\newpage
+
+**Interpretation**
+
+The diagnostic analysis **strongly supports Model 1 as the preferred specification**. While Model 3 passes most diagnostic tests, it suffers from structural instability and its additional predictors lack robustness under proper correction for serial correlation. Model 1's combination of parsimony, stability, and robust predictive power makes it the superior choice for understanding and forecasting the relationship between the yield curve and economic growth.
+
+
+
+# 8. Critique
+
+## 8.1 Replication Success and Methodological Improvements
+
+We successfully replicate Estrella and Hardouvelis (1991), confirming that the term spread (SPREAD) significantly predicts future real economic activity. Our study extends their work by:
+
+- Longer Sample: 1955–2023 (280 quarters vs. 135).
+- Consistent Robust Standard Errors: Newey-West HAC applied systematically to account for             autocorrelation and heteroskedasticity.
+
+## 8.2 Key Differences in Findings
+
+### (i) **SPREAD Coefficient Comparison**:
+- Original: 1.30 (4-quarter ahead, Table I)
+- Our Study: 0.56 (Model 1, Table 9). 
+The 57% reduction suggests weaker predictive power over the extended period.
+This could reflect:
+  - Structural changes in the term structure-growth relationship post-1988
+  - Changes in Federal Reserve policy conduct (e.g., inflation targeting, 
+    forward guidance)
+
+Despite the smaller coefficient, SPREAD remains highly statistically significant 
+(p = 4.90e-04) and economically meaningful.
+
+### (ii) Leading Indicators
+
+- GLI.G appears significant under OLS (p = 0.0045) but insignificant with Newey-West (p = 0.281).
+- Differences may reflect measurement inconsistency (OECD vs. U.S. Conference Board indices).
+- SPREAD remains the robust predictor, confirming the original core finding.
+
+### (iii) Structural Stability
+
+**Critical Finding**: Our CUSUM test and Chow structural break test at 2008Q1 reveal a fundamental difference:
+- **Model 1 (SPREAD only)**: No structural break detected (Chow test p = 0.09)
+- **Model 3 (Full model)**: Significant structural break detected (Chow test p = 0.001)
+
+The original paper did not extensively examine structural stability across major financial crises. Our evidence suggests that **while the core SPREAD relationship remained stable through the 2008 Financial Crisis, the relationships involving additional macroeconomic controls experienced significant structural breaks**.
+
+This finding has important implications for the concern raised by the original authors: "the historical predictive power of the yield curve does not imply that the yield curve would continue to be useful in the future" (p. 568). Our evidence suggests the parsimonious Model 1 specification is more robust to regime changes than expanded specifications.
+
+### (iv) Survey Forecasts
+
+Estrella and Hardouvelis (1991, Table V) found that SPREAD outperformed ASA/NBER median survey forecasts with lower RMSE values. Our cross-validation approach confirms this finding but uses a more rigorous out-of-sample testing framework that the original paper only partially employed.
+
+### (v) Real Federal Funds Rate
+
+The original study found that "a higher real federal funds rate today is associated with a lower growth in future output" (p. 566), with statistically significant negative coefficients persisting for about 6 quarters. Our results show:
+
+- RFF.G is consistently insignificant across all model specifications under Newey-West correction     (Model 2: p = 0.70; Model 3: p = 0.68)
+- Notably, our RFF.G coefficients are positive (though insignificant), contrasting with the original   paper's negative and significant coefficients
+- This suggests the RFF.G relationship may have weakened substantially or reversed in recent          decades, possibly due to changes in Federal Reserve operating procedures, the adoption of explicit   inflation targeting (since the mid-1990s), or the fundamental shift in monetary transmission        mechanisms during and after the zero lower bound era
+
+### (vi) Economic Interpretation: Then vs. Now
+
+Estrella and Hardouvelis (1991) concluded that "historically the information in the yield curve could have been useful not only to private investors but also to the Federal Reserve because it reflected, inter alia, factors that were not under the control of the monetary authorities" (p. 575).
+
+Our extended analysis both supports and qualifies this interpretation:
+
+**Supporting Evidence:**
+- SPREAD's predictive power persists through 2023,with the coefficient remaining highly significant   (p=4.90e-04) confirming its robustness
+- Model 1 shows no structural break at 2008Q1 (Chow test p = 0.09), 
+  suggesting the core SPREAD-growth relationship remained stable through 
+  the Financial Crisis
+
+**New Complications:**
+- Model 3 exhibits significant structural instability post-2008 (Chow test 
+  p = 0.001), indicating that relationships between control variables and 
+  growth changed fundamentally
+- The Federal Reserve's unprecedented interventions post-2008 (QE, forward 
+  guidance, zero lower bound) may have altered how the yield curve reflects 
+  economic information
+- The weaker coefficient magnitude (1.30 → 0.56) suggests the yield curve's 
+  signal may have become noisier or that other factors now compete for 
+  attention in bond markets
+
+**Policy Implications:**
+The divergence between Model 1's stability and Model 3's instability suggests 
+that while the basic yield curve signal remains informative, policymakers should 
+be cautious about conditioning on additional variables whose relationships may 
+have shifted.
+
+### (vii) Recession Prediction
+
+The original paper developed a probit model predicting NBER-dated recessions 
+using SPREAD (pseudo-R² = 0.297). While we do not replicate this analysis, 
+our finding that SPREAD maintains significance in linear growth models suggests 
+its recession-prediction capability likely persists. Future research could 
+examine whether the 2020 COVID recession and subsequent recovery affected 
+this relationship.
+
+\newpage
+# 9. References
+\hypertarget{ref1}{}[1] **Estrella, A., & Hardouvelis, G. (1991)** *The Term Structure as a Predictor of Real Economic Activity* Available at: <https://www.jstor.org/stable/pdf/2328836.pdf?refreqid=fastly-default%3Af05f01d5cd1d41ebb4c85ed7d75be676&ab_segments=&initiator=&acceptTC=1>
+
+\hypertarget{ref2}{}[2] **Fama, E. F. (1984, 1986, 1990)** *Term-structure forecasts of interest rates, inflation and real returns* Available at: <https://www.sciencedirect.com/science/article/pii/0304393290900456>
+
+\hypertarget{ref3}{}[3] **Campbell & Shiller** *The Dividend-Price Ratio and Expectations of Future Dividends and Discount Factors* Available at: <https://www.jstor.org/stable/2961997>
+
+\hypertarget{ref4}{}[4] **Mishkin (1988, 1990)** *The Information in the Longer Maturity Term Structure About Future Inflation* Available at: <https://www.jstor.org/stable/2937901>
+
+\hypertarget{ref5}{}[5] **Fama & Bliss (1987)** *TThe Information in Long-Maturity Forward Rates* Available at: <http://marshallinside.usc.edu/dietrich/aer-1987-fama-bliss-infofwdrates.pdf>
+
+\hypertarget{ref6}{}[6] **Laurent (1988)** *An interest rate-based indicator of monetary policy* Available at: <https://www.chicagofed.org/-/media/publications/economic-perspectives/1988/ep-jan-feb1988-part1-laurent-pdf.pdf>
+
+\hypertarget{ref7}{}[7] **Harvey (1988)** *The real term structure and consumption growth* Available at: <https://www.sciencedirect.com/science/article/pii/0304405X88900736>
